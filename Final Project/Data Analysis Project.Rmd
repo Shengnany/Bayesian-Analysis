@@ -1,0 +1,399 @@
+---
+title: "Data Analysis Project"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+# Bayesian modeling and prediction using movies
+
+* * *
+
+## References   
+1. https://rstudio-pubs-static.s3.amazonaws.com/342314_b1db7ca80c0c4d4eabde95310c0452b2.html
+
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+#install.packages('statsr')
+library(statsr)
+#package_version('statsr')
+library(BAS)
+library(caret)
+library(grid)
+library(gridExtra)
+detach("package:gridExtra",character.only = TRUE, unload=TRUE)
+library(lattice)
+```
+
+```{r reproducible code}
+set.seed(123)
+```
+
+### Load data
+
+The data set is comprised of 651 randomly sampled movies produced and released before 2016.
+Some of the varibles provides extra information for analysis but are not useful for prediction, we will exclude them before building the model.
+```{r load-data}
+load("movies.Rdata")
+```
+* * *
+
+
+## Part 1: Data
+
+check data type
+```{r}
+str(movies)
+```
+
+check summary statistics
+```{r}
+summary(movies)
+```
+### Reasoning for generabizability 
+We assume random sampling in this data set. However, due to the lack of the sampling method, we are inable to provide any information to the prior of the model.
+
+* * *
+
+## Part 2: Data manipulation
+
+###Create new variables
+
+* Create new variable based on title_type: New variable should be called feature_film with levels yes (movies that are feature films) and no
+Create new variable based on genre: New variable should be called drama with levels yes (movies that are dramas) and no
+* Create new variable based on mpaa_rating: New variable should be called mpaa_rating_R with levels yes (movies that are R rated) and no
+* Create two new variables based on thtr_rel_month:
+  + New variable called oscar_season with levels yes (if movie is released in November, October, or December) and no
+  + New variable called summer_season with levels yes (if movie is released in May, June, July, or August) and no
+```{r }
+movies <- mutate(movies, feature_film = as.factor(ifelse(movies$'title_type' == 'Feature Film', 'yes', 'no')))
+movies <- mutate(movies, drama = as.factor(ifelse(movies$'genre' == 'Drama', 'yes', 'no')))
+movies <- mutate(movies, mpaa_rating_R = as.factor(ifelse(movies$mpaa_rating == 'R', 'yes', 'no')))
+movies <- mutate(movies, oscar_season = as.factor(ifelse(movies$thtr_rel_month %in% c(10:12), 'yes', 'no')))
+movies <- mutate(movies, summer_season = as.factor(ifelse(movies$thtr_rel_month %in% c(5:8), 'yes', 'no')))
+```
+
+Save only complete rows of our data
+```{r remove incomplete data}
+movies <- movies[complete.cases(movies),]
+```
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+###  Plots 
+
+#### Distribution of audience_score
+
+```{r new features}
+new_features <- select(movies, c('audience_score', 'feature_film', 'drama', 'mpaa_rating_R', 'oscar_season', 'summer_season'))
+summary(new_features)
+```
+
+```{r hist and density}
+options(repr.plot.width = 5, repr.plot.height = 2)
+
+audience_score_hist <- ggplot(data=movies, aes(x = audience_score)) + 
+  geom_histogram(bins=floor(sqrt(length(movies$audience_score)))) +
+  ggtitle("Audience Score Histogram") 
+ggplot(data=movies, aes(x = audience_score)) + 
+  geom_histogram(bins=floor(sqrt(length(movies$audience_score)))) +
+  ggtitle("Audience Score Histogram") 
+
+audience_score_density <- ggplot(movies, aes(x=audience_score)) +
+  geom_density(alpha=.5) +
+  ggtitle("Audience Score Density") 
+ggplot(movies, aes(x=audience_score)) +
+  geom_density(alpha=.5) +
+  ggtitle("Audience Score Density") 
+
+
+grid.arrange(audience_score_hist, audience_score_density, nrow=1,  ncol=2)
+grid.arrange
+```
+
+
+#### Conditional Histograms
+
+```{r }
+film_hist <- ggplot(movies, aes(x=audience_score, fill=feature_film)) + geom_histogram(alpha=.5, position="dodge")
+film_density <- ggplot(movies, aes(x=audience_score, fill=feature_film)) + geom_density(alpha=.5)
+```
+```{r}
+drama_hist <- ggplot(movies, aes(x=audience_score, fill=drama)) + geom_histogram(alpha=.5, position="dodge")
+drama_density <- ggplot(movies, aes(x=audience_score, fill=drama)) + geom_density(alpha=.5)
+```
+```{r}
+RR_hist <- ggplot(movies, aes(x=audience_score, fill=mpaa_rating_R)) + geom_histogram(alpha=.5, position="dodge")
+RR_density <- ggplot(movies, aes(x=audience_score, fill=mpaa_rating_R)) + geom_density(alpha=.5)
+```
+```{r}
+oscar_hist <- ggplot(movies, aes(x=audience_score, fill=oscar_season)) + geom_histogram(alpha=.5, position="dodge")
+oscar_density <- ggplot(movies, aes(x=audience_score, fill=oscar_season)) + geom_density(alpha=.5)
+```
+```{r}
+summer_hist <- ggplot(movies, aes(x=audience_score, fill=summer_season)) + geom_histogram(alpha=.5, position="dodge")
+summer_density <- ggplot(movies, aes(x=audience_score, fill=summer_season)) + geom_density(alpha=.5)
+```
+```{r fig.width = 5}
+
+grid.arrange(film_hist, film_density, drama_hist, drama_density, RR_hist, RR_density, oscar_hist, oscar_density, summer_hist, summer_density, ncol=2)
+
+```
+Feature film & drama have a much more overlap of the densities. With more overlap, we can see that there is a relatiohip the variable and autdience_score(responce) since different values of the variables will affect autdience_score.
+
+###Summary statistics
+
+#### Quantiles
+To examine which of the new parameters are most descriptive, we will look at their summary quantiles first.
+
+```{r}
+movies %>% group_by(feature_film) %>% summarise(min=min(audience_score), q25=quantile(audience_score,0.25), median=median(audience_score), mean=mean(audience_score), q75=quantile(audience_score,0.75), max=max(audience_score))
+```
+```{r}
+movies %>% group_by(drama) %>% summarise(min=min(audience_score), q25=quantile(audience_score,0.25), median=median(audience_score), mean=mean(audience_score), q75=quantile(audience_score,0.75), max=max(audience_score))
+```
+```{r}
+movies %>% group_by(mpaa_rating_R) %>% summarise(min=min(audience_score), q25=quantile(audience_score,0.25), median=median(audience_score), mean=mean(audience_score), q75=quantile(audience_score,0.75), max=max(audience_score))
+```
+```{r}
+movies %>% group_by(oscar_season) %>% summarise(min=min(audience_score), q25=quantile(audience_score,0.25), median=median(audience_score), mean=mean(audience_score), q75=quantile(audience_score,0.75), max=max(audience_score))
+```
+```{r}
+movies %>% group_by(summer_season) %>% summarise(min=min(audience_score), q25=quantile(audience_score,0.25), median=median(audience_score), mean=mean(audience_score), q75=quantile(audience_score,0.75), max=max(audience_score))
+```
+```{r box plot}
+ggplot(movies, aes(x=feature_film, y=audience_score, fill=feature_film)) + geom_boxplot()
+ggplot(movies, aes(x=drama, y=audience_score, fill=drama)) + geom_boxplot()
+ggplot(movies, aes(x=mpaa_rating_R, y=audience_score, fill=mpaa_rating_R)) + geom_boxplot()
+ggplot(movies, aes(x=oscar_season, y=audience_score, fill=oscar_season)) + geom_boxplot()
+ggplot(movies, aes(x=summer_season, y=audience_score, fill=summer_season)) + geom_boxplot()
+ggplot(movies, aes(x=drama, y=audience_score, fill=drama)) + geom_boxplot()
+```
+From the plots we can see that Feature_Film and drama have the most diffent distribution of IQR separately(big difference in adience score for different values) and are mostly related to the audience score. 
+
+
+####Baysien inference
+
+```{r }
+bayes_inference(y=audience_score, x=feature_film, data=movies, statistic="mean", type="ht", null=0, alternative="twosided")
+```
+```{r }
+bayes_inference(y=audience_score, x=drama, data=movies, statistic="mean", type="ht", null=0, alternative="twosided")
+```
+```{r }
+bayes_inference(y=audience_score, x=mpaa_rating_R, data=movies, statistic="mean", type="ht", null=0, alternative="twosided")
+```
+```{r }
+bayes_inference(y=audience_score, x=oscar_season, data=movies, statistic="mean", type="ht", null=0, alternative="twosided")
+```
+```{r }
+bayes_inference(y=audience_score, x=summer_season, data=movies, statistic="mean", type="ht", null=0, alternative="twosided")
+```
+Summary of Bayes Factor:
+BF(feature_film) = 1.212332e+13
+BF(drama) = 34.6357
+BF(mpaa_rating_R) = 24.8392
+BF(summer_season) = 22.7623
+BF(oscar_season) = 10.019
+
+This shows that feature_film, feature_film mpaa_rating_R and summer_season have strong evidence in supporting relationship with audience_score. 
+On the other hand, Oscar_season does not have strong eveidence in supporting relationship with audience_score.
+
+* * *
+
+## Part 4: Modeling
+
+### Model parameters select
+
+We only select variables that might have predictive power on our target(audience_score) and exclude some parameters such as actors, audience_rating since theycould influnce our the acuracy of our model. 
+```{r}
+mpar = c('feature_film', 'drama', 'runtime', 'mpaa_rating_R', 'thtr_rel_year', 'oscar_season', 'summer_season', 'imdb_rating', 'imdb_num_votes', 'critics_score', 'best_pic_nom', 'best_pic_win', 'best_actor_win', 'best_actress_win', 'best_dir_win', 'top200_box', 'audience_score')
+select_movies<- select(movies, mpar)
+```
+
+### Train and Test set splitting
+
+We split of  80% of the movies into trainning set and 20% of the movies into test set
+```{r}
+set.seed(123)
+train_ind <- createDataPartition(select_movies$audience_score, p = 0.8,list = FALSE)
+train <- select_movies[train_ind, ]
+test <- select_movies[-train_ind, ]
+```
+
+### Bayesian Model Averaging
+
+##### Fit the model 
+```{r}
+set.seed(123)
+# We use the Bayesian linear regression, `bas.lm` function in the `BAS` package
+bma_regressor <- bas.lm(audience_score ~ .,
+                     data = train, 
+                     prior = "BIC",
+                     modelprior = uniform(),
+                     method = "MCMC",
+                     MCMC.iterations = 10^7)
+```
+
+##### Marginal posterior inclusion probabilities for each variable   
+```{r}
+bma_regressor
+```
+
+##### Top 5 most probably models
+```{r}
+summary(bma_regressor)
+```
+
+#### Model summary
+The 3 Most Highest Marginal Posterior Inclusion Probability Variables:
+Variables               Marginal Posterior Inclusion Probability(>0.5)
+critics_score           0.9623405
+imdb_rating             0.9999976
+runtime                 0.6302524
+Posterior Probability :
+The model that includes run_time, imdb_rating & critics_score has the highest posterior probability 0.28.
+The seconde highest posterior probability model also includes run_time, imdb_rating, critics_score with a posterior probability 0.1593000. Additionally, the model contains best_pic_nomyes, mpaa_rating_R. 
+ALthough the posterior probability seems quite small, but itt is much larger than the uniform prior probability assigned to it, since there are $2^{17}$ possible models.
+Now we have 3 potential predictors: runtime, imdb_rating, critics_score.
+
+#### Visualization 
+```{r fig.width = 5}
+image(bma_regressor, rotate=FALSE, top.models = 20)
+```
+The plot shows just the top 20 models. The highest probability model is the leftmost column. Each row corresponds to one of the predictor variables. The color corresponds to the log posterior odds. We can see that runtime, imdb_rating, critics_score are often included in the models.
+
+#### Marginal Posterior Inclusion Probabilities
+```{r}
+diagnostics(bma_regressor, type="model",pch=20)
+```
+
+#### Model posterior for coefficients:
+
+```{r}
+coefficients(bma_regressor, estimator = 'BMA')
+```
+
+We can provide 95% credible intervals for these coefficients:
+```{r}
+confint(coefficients(bma_regressor))
+```
+Based on this data, there is a 95% chance that coefficient of imdb_rating lies from
+1.331548e+01 to 1.636430e+01.
+
+We can visualize the posterior distribution of the coefficients using the baysien model averaging approach. The posterior distribution of the coefficients of runtime, imdb_rating, critics_score are shown below.
+```{r plot}
+plot(coefficients(bma_regressor), subset=c(4, 9, 11), ask=FALSE)
+```
+
+
+Before moving on to prediction, our top model has revealed runtime, imdb_rating & critics_score as most informative regression parameters. 
+
+These results show that also mpaa_rating_R & summer_season have some additional influence, while oscar season, suprisingly, has the lowest BF.
+
+* * *
+
+## Part 5: Prediction
+
+#### Predictions of the test set
+
+Now we will use Bayesian predictive distribution for predictions and interpretation of predictions.
+
+First we find the predictive values under the *Best Predictive Model* (`BPM`), the one which has predictions closest to BMA and corresponding posterior standard deviations.
+```{r}
+pred <- predict(bma_regressor, newdata=test, estimator="BPM", se.fit=TRUE)
+```
+
+
+#### 95% Credible Interval for predictions
+
+```{r}
+ci_pred <- confint(pred, parm = "pred")
+
+df = data.frame(movie_title=movies[-train_ind, ]$title, audience_score=test$audience_score, prediction=pred$Ybma, lower=ci_pred[,1], upper=ci_pred[,2])
+
+head(df, 20)
+```
+```{r}
+ci_pred
+```
+
+The data shows 20 results of our predictions and their 95% credible interval.
+
+
+#### Diagnostics
+
+```{r residuals}
+df2 <- as.data.frame(cbind(pred$Ybma,test$audience_score))
+colnames(df2) <- c('fit','actual')
+ggplot(data = df2, aes(x = df2$fit, y= df2$actual)) +
+  geom_point(alpha = 1) +
+  geom_abline( slope = 1,intercept =0,)+
+  labs(x = "Fitted values", y = "Actual values")
+```
+Most of our points fall in the diagnal line, meaning the predictions correspond to the actual values closely
+
+We can print out the quantiles of residual errors.
+```{r quantiles}
+print(quantile(df$audience_score - pred$Ybma, probs = c(0,0.25, 0.5, 0.75, 1)))
+```
+Show the distribution of residual errors in histgrams.
+```{r histgram} 
+hist(df$audience_score - pred$Ybma, breaks=2*floor(sqrt(length(pred$Ybma))), main="absolute error", xlab="audience_score - prediction", ylab = "count")
+```
+Show the distribution of relative residual errors in histgrams.
+```{r relative error}
+hist(100 * (df$audience_score - pred$Ybma)/(df$audience_score), breaks=2*floor(sqrt(length(pred$Ybma))), main="relative error", xlab="relative error [%]")
+```
+
+#### Predictions are within the 95% CI
+```{r}
+# in_ci: A list contains TURE and FALSE
+in_ci = (as.numeric(df$audience_score > df$lower) & as.numeric(df$audience_score < df$upper))
+# n: number of audience_score in credible interval
+n = length(in_ci[in_ci])
+n
+# Percentage of predictions are within the 95% CI
+within_interval = 100 *  n/ length(in_ci)
+
+result <- data.frame(Total =nrow(movies[-train_ind, ]), Tests_in_interval=n, tests_within_CI95=within_interval)
+
+result
+```
+118 tests are within their 95% CI, the tests_within_prediction_CI rate is 92.7%
+
+* * *
+
+## Part 6: Conclusion  
+
+
+### Discussions
+
+* We implement Bayesian Model Averaging approach with a BIC Prior and an MCMC method to predict audience_score using selected variables. We split 80% of our data set into training and the rest into test.
+
+* The new variables performs well when we evaluate it conditionally. However, our final model does include them.
+
+### Limitations
+
+* There are some information that we cannot incorparate into our models. For example, if the starring of the movie has actors with high popularity, the movies' ratings might tend to be higher.
+
+* Although randomness is assumed among variables, colinearty may exist bwtween variables. Maybe some types of movies usually get higher imdb_rating_num because their movie types are popular.
+
+### Improvements
+
+* The plots show some outliers, suggesting addtional parameters are required to or they might be simply outliers caused by measurement errors. Either case investigation into the 
+cases is needed.
+
+* To improve the accuracy of our model, we can expect to have more sample sizes to enumerate the entire regression space as much as possible. 
+
+* If we can gather information about the sampling methods then we can update our prior. For example, age distribution of our survey groups might be helpful. 
+
+* We simply just ommitted missing data during modeling which is bad for model accuracy. We do not know if they are missing at random. Mean substitution, regression imputation can come to resuce sometimes.
+ 
