@@ -134,7 +134,7 @@ the app.
 </div>
 
 ```{r gamma-ci}
-qgamma(c(0.025, 0.975), shape = 4, rate = 8).
+(c(0.025, 0.975), shape = 4, rate = 8)
 ```
 
 
