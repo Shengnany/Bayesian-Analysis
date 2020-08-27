@@ -113,7 +113,8 @@ ggplot(movies, aes(x=audience_score)) +
   geom_density(alpha=.5) +
   ggtitle("Audience Score Density") 
 
-
+require(ggplot2)
+require(gridExtra)
 grid.arrange(audience_score_hist, audience_score_density, nrow=1,  ncol=2)
 grid.arrange
 ```
